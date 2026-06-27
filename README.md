@@ -218,3 +218,118 @@ WHERE schedule_interval != 'disabled' AND enabled = 1;
 SELECT device_id, name, schedule_interval, next_run_at, NOW() AS mysql_now FROM config_devices;
 SQL
 ```
+
+---
+
+## Background Scheduler (Automatic Backups without Browser)
+
+By default the scheduler only runs when someone has the Zabbix web UI open.
+To make it run continuously in the background, set up one of these options:
+
+---
+
+### Option 1 — Cron inside the Zabbix web container (Recommended for Docker)
+
+```bash
+# Step 1: Install Python dependencies inside the container
+sudo docker exec -it zabbix-web pip3 install mysql-connector-python cryptography
+
+# Step 2: Install cron inside the container (if not present)
+sudo docker exec -it zabbix-web apt-get install -y cron
+
+# Step 3: Add the cron job (runs every minute)
+sudo docker exec -it zabbix-web bash -c \
+  'echo "* * * * * python3 /usr/share/zabbix/modules/ConfigManager/scripts/scheduler.py \
+  --db-host mysql-server \
+  --db-name zabbix \
+  --db-user zabbix \
+  --db-pass iqlab@2025 \
+  >> /var/log/configmanager-scheduler.log 2>&1" \
+  | crontab -'
+
+# Step 4: Start cron inside the container
+sudo docker exec -it zabbix-web service cron start
+
+# Verify cron is running
+sudo docker exec -it zabbix-web service cron status
+
+# Watch the log
+sudo docker exec -it zabbix-web tail -f /var/log/configmanager-scheduler.log
+```
+
+---
+
+### Option 2 — Docker sidecar service via docker-compose
+
+Add this service to your `docker-compose.yml`:
+
+```yaml
+  configmanager-scheduler:
+    image: python:3.11-slim
+    restart: unless-stopped
+    volumes:
+      - /usr/share/zabbix/modules/ConfigManager/scripts:/scripts:ro
+      - /opt/config-backups:/opt/config-backups
+    environment:
+      DB_SERVER:   mysql-server
+      DB_NAME:     zabbix
+      DB_USER:     zabbix
+      DB_PASSWORD: iqlab@2025
+    depends_on:
+      - mysql-server
+    command: >
+      bash -c "
+        pip install mysql-connector-python cryptography netmiko -q &&
+        while true; do
+          python3 /scripts/scheduler.py
+            --db-host mysql-server
+            --db-name zabbix
+            --db-user zabbix
+            --db-pass iqlab@2025;
+          sleep 60;
+        done
+      "
+    networks:
+      - zabbix-net
+```
+
+Then: `docker-compose up -d configmanager-scheduler`
+
+---
+
+### Option 3 — Cron on the Docker host
+
+```bash
+# On the Ubuntu host machine, run the scheduler via docker exec every minute
+crontab -e
+
+# Add this line:
+* * * * * sudo docker exec zabbix-web python3 /usr/share/zabbix/modules/ConfigManager/scripts/scheduler.py --db-host mysql-server --db-name zabbix --db-user zabbix --db-pass iqlab@2025 >> /var/log/configmanager-scheduler.log 2>&1
+```
+
+---
+
+### Test the scheduler manually
+
+```bash
+# Test inside the container
+sudo docker exec -it zabbix-web python3 \
+  /usr/share/zabbix/modules/ConfigManager/scripts/scheduler.py \
+  --db-host mysql-server \
+  --db-name zabbix \
+  --db-user zabbix \
+  --db-pass iqlab@2025 \
+  --dry-run
+
+# --dry-run shows which devices are due without running backups
+```
+
+### Install Python dependencies
+
+```bash
+sudo docker exec -it zabbix-web pip3 install \
+  mysql-connector-python \
+  cryptography \
+  netmiko
+```
+
