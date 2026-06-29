@@ -13,24 +13,6 @@ Usage:
 
 Install:
   pip3 install websockets paramiko cryptography mysql-connector-python
-
-Security:
-  - Token-based auth: Zabbix PHP generates a one-time token stored in DB/session
-  - Each WebSocket connection must present a valid token
-  - Tokens expire after 60 seconds if unused
-  - All connections logged to config_ssh_sessions
-
-Protocol (JSON over WebSocket):
-  Client → Server:
-    {"type":"connect", "token":"<one-time-token>"}
-    {"type":"input",   "data":"<terminal input>"}
-    {"type":"resize",  "cols":120, "rows":35}
-
-  Server → Client:
-    {"type":"output",  "data":"<terminal output>"}
-    {"type":"connected","message":"Connected to <host>"}
-    {"type":"error",   "message":"<error text>"}
-    {"type":"closed",  "message":"Connection closed"}
 """
 
 import argparse
@@ -45,11 +27,12 @@ import socket
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 log = logging.getLogger('ssh_ws')
@@ -70,28 +53,35 @@ try:
     import mysql.connector
     def db_connect(cfg):
         return mysql.connector.connect(
-            host=cfg['host'], database=cfg['database'],
-            user=cfg['user'], password=cfg['password'],
-            port=cfg['port'], autocommit=True, connection_timeout=10)
+            host=cfg['host'],
+            database=cfg['database'],
+            user=cfg['user'],
+            password=cfg['password'],
+            port=cfg['port'],
+            autocommit=True,
+            connection_timeout=10
+        )
     def db_fetchone(conn, sql, params=()):
-        with conn.cursor() as c:
+        with conn.cursor(dictionary=True) as c:
             c.execute(sql, params)
-            row = c.fetchone()
-            if row and c.description:
-                return dict(zip([d[0] for d in c.description], row))
-            return None
+            return c.fetchone()
     def db_execute(conn, sql, params=()):
         with conn.cursor() as c:
             c.execute(sql, params)
+            return c.rowcount
 except ImportError:
     try:
         import pymysql, pymysql.cursors
         def db_connect(cfg):
             return pymysql.connect(
-                host=cfg['host'], db=cfg['database'],
-                user=cfg['user'], password=cfg['password'],
-                port=cfg['port'], autocommit=True,
-                cursorclass=pymysql.cursors.DictCursor)
+                host=cfg['host'],
+                database=cfg['database'],
+                user=cfg['user'],
+                password=cfg['password'],
+                port=cfg['port'],
+                autocommit=True,
+                cursorclass=pymysql.cursors.DictCursor
+            )
         def db_fetchone(conn, sql, params=()):
             with conn.cursor() as c:
                 c.execute(sql, params)
@@ -99,6 +89,7 @@ except ImportError:
         def db_execute(conn, sql, params=()):
             with conn.cursor() as c:
                 c.execute(sql, params)
+                return c.rowcount
     except ImportError:
         log.error("Install mysql-connector-python or PyMySQL")
         sys.exit(1)
@@ -112,14 +103,15 @@ def decrypt_password(stored: str, secret: str = 'configmanager_default_key_chang
         import base64
         key = hashlib.sha256(secret.encode()).digest()[:32]
         raw = base64.b64decode(stored)
-        iv  = raw[:16]; enc = raw[16:]
+        iv  = raw[:16]
+        enc = raw[16:]
         cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
         dec    = cipher.decryptor()
         padded = dec.update(enc) + dec.finalize()
         pad    = padded[-1]
         return padded[:-pad].decode('utf-8', errors='replace')
-    except Exception as e:
-        log.warning(f"Password decrypt error: {e}")
+    except Exception:
+        log.exception("Password decrypt error")
         return ''
 
 
@@ -181,11 +173,17 @@ class SSHSession:
 
     def send(self, data: str):
         if self.channel and not self._closed:
-            self.channel.send(data)
+            try:
+                self.channel.send(data)
+            except Exception:
+                self._closed = True
 
     def resize(self, cols: int, rows: int):
         if self.channel and not self._closed:
-            self.channel.resize_pty(width=cols, height=rows)
+            try:
+                self.channel.resize_pty(width=cols, height=rows)
+            except Exception:
+                self._closed = True
 
     def read_available(self) -> str | None:
         if self._closed or not self.channel:
@@ -200,6 +198,7 @@ class SSHSession:
                 return data.decode('utf-8', errors='replace')
         except Exception:
             self._closed = True
+            return None
         return ''
 
     def is_closed(self) -> bool:
@@ -216,8 +215,10 @@ class SSHSession:
     def close(self):
         self._closed = True
         try:
-            if self.channel: self.channel.close()
-            if self.client:  self.client.close()
+            if self.channel:
+                self.channel.close()
+            if self.client:
+                self.client.close()
         except Exception:
             pass
 
@@ -227,15 +228,19 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
     remote = websocket.remote_address
     log.info(f"WS connection from {remote}")
 
-    ssh       = None
-    session_id= None
-    conn      = None
+    ssh        = None
+    session_id = None
+    conn       = None
 
     async def send(msg: dict):
+        if websocket.closed:
+            return
         try:
             await websocket.send(json.dumps(msg))
-        except Exception:
+        except websockets.exceptions.ConnectionClosed:
             pass
+        except Exception:
+            log.exception("Error sending message to websocket")
 
     try:
         conn = db_connect(db_cfg)
@@ -253,7 +258,7 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
             await send({'type': 'error', 'message': 'Invalid JSON'})
             return
 
-        if msg.get('type') != 'connect':
+        if not isinstance(msg, dict) or msg.get('type') != 'connect':
             await send({'type': 'error', 'message': 'Expected connect message'})
             return
 
@@ -261,7 +266,9 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
 
         # Validate token from DB
         row = db_fetchone(conn,
-            "SELECT t.*, d.* FROM config_ssh_tokens t "
+            "SELECT t.token, t.device_id, t.zabbix_user, "
+            "       d.name, d.ip_address, d.username, d.password, d.port, d.vendor "
+            "FROM config_ssh_tokens t "
             "INNER JOIN config_devices d ON d.device_id = t.device_id "
             "WHERE t.token = %s AND t.expires_at > NOW() AND t.used = 0",
             (token,))
@@ -271,8 +278,7 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
             return
 
         # Mark token used
-        db_execute(conn,
-            "UPDATE config_ssh_tokens SET used=1 WHERE token=%s", (token,))
+        db_execute(conn, "UPDATE config_ssh_tokens SET used=1 WHERE token=%s", (token,))
 
         device      = row
         zabbix_user = row.get('zabbix_user', 'admin')
@@ -282,10 +288,11 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
             "INSERT INTO config_ssh_sessions (device_id, zabbix_user, client_ip) "
             "VALUES (%s, %s, %s)",
             (device['device_id'], zabbix_user, str(remote[0])))
+        
         with conn.cursor() as c:
             c.execute('SELECT LAST_INSERT_ID() AS id')
             r = c.fetchone()
-            session_id = int(r['id'] if isinstance(r, dict) else r[0])
+            session_id = int(r[0] if isinstance(r, (list, tuple)) else r['id'])
 
         # Initial terminal size
         cols = int(msg.get('cols', 120))
@@ -300,15 +307,16 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
             await send({'type': 'connected', 'message': banner})
             await send({'type': 'output', 'data': f'\x1b[32m✓ {banner}\x1b[0m\r\n\r\n'})
         except Exception as e:
+            log.exception(f"SSH connection failed for device ID {device['device_id']}")
             await send({'type': 'error', 'message': f'SSH connection failed: {e}'})
             return
 
         log.info(f"SSH connected: {device['name']} ({device['ip_address']}) by {zabbix_user}")
 
-        # I/O loop
+        # I/O loops
         async def read_ssh():
             """Continuously read from SSH and send to WebSocket."""
-            while not ssh.is_closed():
+            while ssh and not ssh.is_closed():
                 data = ssh.read_available()
                 if data is None:   # channel closed
                     break
@@ -319,26 +327,38 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
 
         async def read_ws():
             """Continuously read from WebSocket and send to SSH."""
-            async for raw_msg in websocket:
-                try:
-                    m = json.loads(raw_msg)
-                except Exception:
-                    continue
+            try:
+                async for raw_msg in websocket:
+                    try:
+                        m = json.loads(raw_msg)
+                    except Exception:
+                        continue
 
-                if m.get('type') == 'input':
-                    ssh.send(m.get('data', ''))
-                elif m.get('type') == 'resize':
-                    ssh.resize(int(m.get('cols', 120)), int(m.get('rows', 35)))
+                    if not isinstance(m, dict):
+                        continue
 
-        # Run both loops concurrently
-        try:
-            await asyncio.gather(read_ssh(), read_ws())
-        except websockets.exceptions.ConnectionClosed:
-            pass
+                    if m.get('type') == 'input':
+                        ssh.send(m.get('data', ''))
+                    elif m.get('type') == 'resize':
+                        ssh.resize(int(m.get('cols', 120)), int(m.get('rows', 35)))
+            except websockets.exceptions.ConnectionClosed:
+                pass
 
-    except Exception as e:
-        log.error(f"Handler error: {e}")
-        await send({'type': 'error', 'message': str(e)})
+        # Run both tasks concurrently and cleanly manage termination
+        read_ssh_task = asyncio.create_task(read_ssh())
+        read_ws_task = asyncio.create_task(read_ws())
+
+        done, pending = await asyncio.wait(
+            [read_ssh_task, read_ws_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        for task in pending:
+            task.cancel()
+
+    except Exception:
+        log.exception("Handler error")
+        await send({'type': 'error', 'message': 'Internal connection error occurred'})
 
     finally:
         if ssh:
@@ -350,26 +370,15 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
                     "duration_sec=TIMESTAMPDIFF(SECOND, started_at, NOW()) "
                     "WHERE session_id=%s", (session_id,))
             except Exception:
-                pass
+                log.exception("Failed to update session end details")
         if conn:
-            try: conn.close()
-            except Exception: pass
+            try:
+                conn.close()
+            except Exception:
+                pass
 
         log.info(f"WS disconnected from {remote} (session={session_id})")
         await send({'type': 'closed', 'message': 'SSH session closed'})
-
-
-# ── Token API endpoint (called by PHP to register tokens) ─────────────────────
-async def token_api(websocket):
-    """Separate WS path for PHP to register new tokens."""
-    try:
-        raw = await asyncio.wait_for(websocket.recv(), timeout=5)
-        msg = json.loads(raw)
-        if msg.get('action') == 'register':
-            register_token(msg['token'], msg['device_id'], msg.get('user', 'admin'))
-            await websocket.send(json.dumps({'ok': True}))
-    except Exception:
-        pass
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -414,7 +423,10 @@ def main():
             asyncio.create_task(cleanup())
             await asyncio.Future()  # run forever
 
-    asyncio.run(serve())
+    try:
+        asyncio.run(serve())
+    except KeyboardInterrupt:
+        log.info("Server stopped by user interrupt")
 
 
 if __name__ == '__main__':
