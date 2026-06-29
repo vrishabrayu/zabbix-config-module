@@ -279,7 +279,7 @@ async def handle_connection(websocket, db_cfg: dict, secret: str):
 
         # Log session start
         db_execute(conn,
-            "INSERT INTO config_ssh_sessions (device_id, zabbix_user, ip_address) "
+            "INSERT INTO config_ssh_sessions (device_id, zabbix_user, client_ip) "
             "VALUES (%s, %s, %s)",
             (device['device_id'], zabbix_user, str(remote[0])))
         with conn.cursor() as c:
