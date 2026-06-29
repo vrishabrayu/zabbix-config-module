@@ -67,29 +67,26 @@ class CControllerSSHTerminal extends CController {
 		$deviceId = (int)$this->getInput('device_id', 0);
 
 		if ($deviceId <= 0) {
-			$payload = json_encode(['error' => 'device_id required']);
+			$data = ['error' => 'device_id required'];
 		} elseif (!$this->repo->v13TablesExist()) {
-			$payload = json_encode(['error' => 'SSH tables not installed']);
+			$data = ['error' => 'SSH tables not installed'];
 		} else {
 			$device = $this->repo->getDevice($deviceId);
 			if (!$device) {
-				$payload = json_encode(['error' => 'Device not found']);
+				$data = ['error' => 'Device not found'];
 			} else {
-				$user    = CWebUser::$data['alias'] ?? 'admin';
-				$token   = $this->repo->createSSHToken($deviceId, $user);
-				$payload = json_encode([
+				$user  = CWebUser::$data['alias'] ?? 'admin';
+				$token = $this->repo->createSSHToken($deviceId, $user);
+				$data  = [
 					'token'       => $token,
 					'device_id'   => $deviceId,
 					'device_name' => $device['name'],
 					'ip'          => $device['ip_address'],
-				]);
+				];
 			}
 		}
 
-		// Use Zabbix's raw response — never call header()/echo/exit directly
-		$response = new CControllerResponseRaw();
-		$response->setHeader('Content-Type', 'application/json');
-		$response->setBody($payload);
+		$response = new CControllerResponseData(['main_block' => json_encode($data)]);
 		$this->setResponse($response);
 	}
 }
