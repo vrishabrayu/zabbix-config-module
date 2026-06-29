@@ -86,7 +86,7 @@ class CControllerSSHTerminal extends CController {
 			}
 		}
 
-		$response = new CControllerResponseData(['main_block' => json_encode($data)]);
-		$this->setResponse($response);
+		echo json_encode($data);
+		exit;
 	}
 }
