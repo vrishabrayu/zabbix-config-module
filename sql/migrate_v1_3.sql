@@ -51,4 +51,24 @@ SET @s2 = IF(@t2=0,
     "SELECT 'config_ssh_sessions already exists' AS status");
 PREPARE s2 FROM @s2; EXECUTE s2; DEALLOCATE PREPARE s2;
 
+-- ── Rename ip_address -> client_ip if upgrading from v1.2 ────
+-- Safe: only runs if ip_address column exists and client_ip does not
+SET @has_old = (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA=@dbname
+      AND TABLE_NAME='config_ssh_sessions'
+      AND COLUMN_NAME='ip_address'
+);
+SET @has_new = (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA=@dbname
+      AND TABLE_NAME='config_ssh_sessions'
+      AND COLUMN_NAME='client_ip'
+);
+SET @alter_sql = IF(@has_old=1 AND @has_new=0,
+    "ALTER TABLE `config_ssh_sessions` CHANGE `ip_address` `client_ip` VARCHAR(45) NOT NULL DEFAULT ''",
+    "SELECT 'No column rename needed' AS status"
+);
+PREPARE s3 FROM @alter_sql; EXECUTE s3; DEALLOCATE PREPARE s3;
+
 SELECT 'Migration v1.3 complete — SSH Terminal tables ready.' AS status;
