@@ -795,10 +795,10 @@ checkWS();
 setInterval(checkWS, 30000);
 
 /* ── Device selection (sidebar) ─────────────────────────── */
-function sshSelectDevice(deviceId, info) {
+window.sshSelectDevice = function(deviceId, info) {
 	// Navigate to terminal page for this device
 	window.location.href = 'zabbix.php?action=configmanager.ssh&task=open&device_id=' + deviceId;
-}
+};
 
 /* ══════════════════════════════════════════════════════════
    TERMINAL — only runs when a device is selected
