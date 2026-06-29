@@ -1,0 +1,21 @@
+{
+	"manifest_version": 2.0,
+	"id": "configmanager",
+	"name": "Config Manager",
+	"version": "1.3.0",
+	"namespace": "ConfigManager",
+	"author": "Identiqa NMS",
+	"description": "Enterprise Network Configuration Manager — Backup, Push, Templates, Diff, Restore, SSH Terminal.",
+	"actions": {
+		"configmanager.view": {
+			"class": "CControllerConfigManager",
+			"view": "configmanager.view",
+			"layout": "layout.htmlpage"
+		},
+		"configmanager.ssh": {
+			"class": "CControllerSSHTerminal",
+			"view": "configmanager.ssh",
+			"layout": "layout.htmlpage"
+		}
+	}
+}

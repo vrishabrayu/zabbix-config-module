@@ -1,0 +1,69 @@
+diff --git a/views/configmanager.view.php b/views/configmanager.view.php
+index a0b1c2d..e3f4g5h 100644
+--- a/views/configmanager.view.php
++++ b/views/configmanager.view.php
+@@ -194,12 +194,9 @@
+ 		</div>
+ 	</div>
+ <?php endif ?>
+-
+-
+ <!-- ════════════════════════════════════════════
+      DEVICES
+      ════════════════════════════════════════════ -->
+-<?php endif ?>
+ 
+ 
+ <?php if ($tab === 'devices'): ?>
+@@ -300,12 +300,9 @@
+ 		</div>
+ 	</dialog>
+ <?php endif ?>
+-
+-
+ <!-- ════════════════════════════════════════════
+      BACKUP HISTORY
+      ════════════════════════════════════════════ -->
+-<?php endif ?>
+ 
+ 
+ <?php if ($tab === 'history'): ?>
+@@ -414,12 +414,9 @@
+ 		<?php else: ?><div class="cm-card"><div class="cm-empty"><div class="cm-empty-icon">🗂️</div><div class="cm-empty-title">Select a device above</div></div></div><?php endif ?>
+ 	<?php endif ?>
+ <?php endif ?>
+-
+-
+ <!-- ════════════════════════════════════════════
+      PUSH CONFIG
+      ════════════════════════════════════════════ -->
+-<?php endif ?>
+ 
+ 
+ <?php if ($tab === 'push' && $v12): ?>
+@@ -571,12 +571,9 @@
+ 		</div>
+ 	</div>
+ <?php endif ?>
+-
+-
+ <!-- ════════════════════════════════════════════
+      TEMPLATES
+      ════════════════════════════════════════════ -->
+-<?php endif ?>
+ 
+ 
+ <?php if ($tab === 'templates' && $v12): ?>
+@@ -656,12 +656,9 @@
+ 		<div class="cm-card"><div class="cm-empty"><div class="cm-empty-icon">📋</div><div class="cm-empty-title">No templates yet</div><div class="cm-empty-sub">Add a template above — SNMP, NTP, Syslog, VLAN, AAA etc.</div></div></div>
+ 	<?php endif ?>
+ <?php endif ?>
+-
+-
+ <!-- ════════════════════════════════════════════
+      PUSH LOG
+      ════════════════════════════════════════════ -->
+-<?php endif ?>
+ 
+ 
+ <?php if ($tab === 'pushlog' && $v12): ?>
