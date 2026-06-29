@@ -84,6 +84,8 @@ class CControllerSSHTerminal extends CController {
 					'ip'          => $device['ip_address'],
 				];
 			}
+		}
+
 		$response = new CControllerResponseData(['main_block' => json_encode($data)]);
 		$this->setResponse($response);
 	}
