@@ -679,10 +679,15 @@ $vendorIcon = [
 							<td class="mono"><?= $h(substr((string)$s['started_at'], 0, 16)) ?></td>
 							<td><?php
 								$dur = (int)$s['duration_sec'];
-								if ($dur >= 3600) echo floor($dur/3600).'h '.floor(($dur%3600)/60).'m';
-								elseif ($dur >= 60) echo floor($dur/60).'m '.$dur%60.'s';
-								elseif ($dur > 0)   echo $dur.'s';
-								else                echo $s['ended_at'] ? '—' : '<span style="color:var(--p-blue)">Active</span>';
+								if ($dur >= 3600) {
+									echo floor($dur/3600).'h '.floor(($dur%3600)/60).'m';
+								} elseif ($dur >= 60) {
+									echo floor($dur/60).'m '.($dur%60).'s';
+								} elseif ($dur > 0) {
+									echo $dur.'s';
+								} else {
+									echo $s['ended_at'] ? '—' : '<span style="color:var(--p-blue)">Active</span>';
+								}
 							?></td>
 						</tr>
 						<?php endforeach ?>
